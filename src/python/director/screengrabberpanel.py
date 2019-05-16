@@ -27,9 +27,12 @@ class WidgetDict(object):
 
 
 class ScreenGrabberPanel(object):
+    # HACK
+    instance = None
 
     def __init__(self, view):
 
+        ScreenGrabberPanel.instance = self
         self.view = view
 
         loader = QtUiTools.QUiLoader()
@@ -158,19 +161,16 @@ class ScreenGrabberPanel(object):
         self.updateRecordingStats()
 
     def onRecordMovie(self):
-        # Enforce even width number, otherwise avconv will fail
-        _width = (self.view.width if self.view.width % 2 == 0 else self.view.width + 1)
-        _height = (self.view.height if self.view.height % 2 == 0 else self.view.height + 1)
-        self.view.setFixedSize(_width, _height)
-
         if self.isRecordMode():
             self.startRecording()
         else:
             self.stopRecording()
 
-        self.updateRecordingButtons()
-
-    def startRecording(self):
+    def startRecording(self, useTimer=True):
+        # Enforce even width number, otherwise avconv will fail
+        _width = (self.view.width if self.view.width % 2 == 0 else self.view.width + 1)
+        _height = (self.view.height if self.view.height % 2 == 0 else self.view.height + 1)
+        self.view.setFixedSize(_width, _height)
 
         self.frameCount = 0
 
@@ -197,24 +197,32 @@ class ScreenGrabberPanel(object):
         self.startT = time.time()
         interval = int(round(1000.0 / self.captureRate()))
 
-        self.recordTimer.setInterval(interval)
-        self.recordTimer.start()
+        if useTimer:
+            self.recordTimer.setInterval(interval)
+            self.recordTimer.start()
 
-    def stopRecording(self):
-        self.recordTimer.stop()
+        self.updateRecordingButtons()
+        print "Start Recording..."
+
+    def stopRecording(self, useTimer=True):
+        if useTimer:
+            self.recordTimer.stop()
         if self.frameCount > 0:
             self.showEncodingDialog()
+        self.updateRecordingButtons()
 
     def showEncodingDialog(self):
 
         msg = 'Recorded %d frames.  For encoding, use this command line:\n\n\n' % self.frameCount
-        msg += '    cd "%s"\n\n' % self.movieOutputDirectory()
-        msg += '    avconv -r %d -i frame_%%07d.tiff \\\n' % self.captureRate()
+        msg += '   (set -eux\n'
+        msg += '    cd "%s"\n' % self.movieOutputDirectory()
+        msg += '    ffmpeg -r %d -i frame_%%07d.tiff \\\n' % self.captureRate()
         msg += '           -vcodec libx264 \\\n'
         msg += '           -preset slow \\\n'
         msg += '           -crf 18 \\\n'
         msg += '           -pix_fmt yuv420p \\\n'
-        msg += '           output.mp4\n\n\n'
+        msg += '           output.mp4\n'
+        msg += '    )'
 
         app.showInfoMessage(msg, title='Recording Stopped')
 
@@ -256,6 +264,8 @@ class ScreenGrabberPanel(object):
             self.unlockViewSize()
 
     def onRecordTimer(self):
+        # TODO(eric.cousineau): Try to separate a portion of this such that it can be more
+        # synchronously combined with LcmLogPlayer.
 
         saveScreenshot(self.view, self.nextMovieFileName(), shouldRender=False)
 

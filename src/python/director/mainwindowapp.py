@@ -396,6 +396,8 @@ class MainWindowPanelFactory(object):
         from director.screengrabberpanel import ScreenGrabberPanel
         screenGrabberPanel = ScreenGrabberPanel(fields.view)
         screenGrabberDock = fields.app.addWidgetToDock(screenGrabberPanel.widget, QtCore.Qt.RightDockWidgetArea, visible=False)
+        # HACK: Remember dock.
+        ScreenGrabberPanel.dock = screenGrabberDock
 
         return FieldContainer(
           screenGrabberPanel=screenGrabberPanel,
