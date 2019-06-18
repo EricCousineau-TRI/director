@@ -220,6 +220,10 @@ class LcmLogPlayerGui(object):
             recorder.startRecording(useTimer=False)
             def onFrame(t):
                 recorder.onRecordTimer()
+                filename = recorder._prev_filename + ".txt"
+                with open(filename, 'w') as f:
+                    f.write(str(t))
+                    f.write("\n")
             def onStop():
                 recorder.stopRecording(useTimer=False)
             self.onPlay(onFrame = onFrame, onStop = onStop, fixedRate = fixedRate)

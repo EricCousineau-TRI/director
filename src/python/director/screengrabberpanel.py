@@ -129,6 +129,7 @@ class ScreenGrabberPanel(object):
 
     def nextMovieFileName(self):
         filename = os.path.join(self.movieOutputDirectory(), 'frame_%07d.tiff' % self.frameCount)
+        self._prev_filename = filename
         self.frameCount += 1
         return filename
 
