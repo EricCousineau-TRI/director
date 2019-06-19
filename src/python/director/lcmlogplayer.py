@@ -76,29 +76,48 @@ class LcmLogPlayer(object):
         self.timer.stop()
 
     def playback(self, startTime, playLength, onFrame=None, onStop=None, fixedRate=None):
+        # TODO(eric.cousineau): Still not completely precise, in that it may miss
+        # some ticks... but good enough for now.
 
         self.resetPlayPosition(startTime)
-
         startTimestamp = self.timestamps[self.nextEventIndex]
         endTimestamp = startTimestamp + playLength*1e6
 
+        def advanceTo(endTimestamp):
+            numEvents = len(self.timestamps)
+            if self.nextEventIndex >= numEvents:
+                return "finished", None
+            while True:
+                event = self.log.read_next_event()
+                timestamp = self.timestamps[self.nextEventIndex]
+                self.nextEventIndex += 1
+                self.lcmHandle.publish(event.channel, event.data)
+                if not (self.nextEventIndex < numEvents
+                        and self.timestamps[self.nextEventIndex] <= endTimestamp):
+                    break
+            return "advanced", timestamp
+
+        # Make this capturable.
+        state = dict(
+            nextHit=startTimestamp,
+        )
+
         def onTick():
-            elapsed = self.timer.elapsed * self.playbackFactor
-            if fixedRate != None:
-                dt = fixedRate * self.playbackFactor
+            status, timestamp = advanceTo(state["nextHit"])
+            if status == "finished":
+                if onStop:
+                    onStop()
+                return False
             else:
-                dt = elapsed
-            self.advanceTime(dt, onFrame, fixedRate)
-
-            good = (self.nextEventIndex < len(self.timestamps)
-                    and self.timestamps[self.nextEventIndex] <= endTimestamp)
-
-            if onFrame and good and fixedRate is not None:
-                onFrame(self.timestamps[self.nextEventIndex] / 1.e6)
-            if onStop and not good:
-                onStop()
-
-            return bool(good) #convert numpy.bool to bool
+                if onFrame:
+                    onFrame(timestamp / 1e6)
+                # Request advanced time.
+                if fixedRate is not None:
+                    dt = fixedRate * self.playbackFactor
+                else:
+                    dt = self.timer.elapsed * self.playbackFactor
+                state["nextHit"] += dt * 1e6
+                return True
 
         self.timer.callback = onTick
         self.timer.start()
@@ -212,7 +231,7 @@ class LcmLogPlayerGui(object):
         from director.screengrabberpanel import ScreenGrabberPanel
         recorder = getattr(ScreenGrabberPanel, 'instance', None)
         if recorder is not None:
-            fixedRate = 2 * 1. / recorder.captureRate()
+            fixedRate = 1. / recorder.captureRate()
             # HACK(eric.cousineau): Tunnel directly through.
             with BlockSignals(recorder.ui.recordMovieButton):
                 recorder.ui.recordMovieButton.click()
