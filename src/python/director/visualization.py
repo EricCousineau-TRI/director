@@ -1,6 +1,6 @@
 import director.objectmodel as om
 import director.applogic as app
-from shallowCopy import shallowCopy
+from .shallowCopy import shallowCopy
 import director.vtkAll as vtk
 from director import filterUtils
 from director import transformUtils
@@ -72,6 +72,9 @@ class PolyDataItem(om.ObjectModelItem):
     def hasDataSet(self, dataSet):
         return dataSet == self.polyData
 
+    def hasActor(self, actor):
+        return actor == self.actor
+
     def setPolyData(self, polyData):
 
         self.polyData = polyData
@@ -89,7 +92,7 @@ class PolyDataItem(om.ObjectModelItem):
 
     def getArrayNames(self):
         pointData = self.polyData.GetPointData()
-        return [pointData.GetArrayName(i) for i in xrange(pointData.GetNumberOfArrays())]
+        return [pointData.GetArrayName(i) for i in range(pointData.GetNumberOfArrays())]
 
     def setSolidColor(self, color):
         self.setProperty('Color', [float(c) for c in color])
@@ -108,7 +111,7 @@ class PolyDataItem(om.ObjectModelItem):
 
         array = self.polyData.GetPointData().GetArray(arrayName)
         if not array:
-            print 'colorBy(%s): array not found' % arrayName
+            print('colorBy(%s): array not found' % arrayName)
             self.mapper.ScalarVisibilityOff()
             self.polyData.GetPointData().SetActiveScalars(None)
             return
@@ -190,13 +193,16 @@ class PolyDataItem(om.ObjectModelItem):
             self.colorBy(arrayName, scalarRange=(rangeMin, rangeMax))
 
     def _updateSurfaceProperty(self):
-        enableSurfaceMode = self.polyData.GetNumberOfPolys() or self.polyData.GetNumberOfStrips()
+        hasPolys = self.polyData.GetNumberOfPolys() or self.polyData.GetNumberOfStrips()
+        hasLines = self.polyData.GetNumberOfLines()
+
+        enableSurfaceMode = hasPolys or hasLines
         self.properties.setPropertyAttribute('Surface Mode', 'hidden', not enableSurfaceMode)
 
-        enableLineWidth = enableSurfaceMode or self.polyData.GetNumberOfLines()
+        enableLineWidth = enableSurfaceMode
         self.properties.setPropertyAttribute('Line Width', 'hidden', not enableLineWidth)
 
-        enablePointSize = enableSurfaceMode or not enableLineWidth
+        enablePointSize = True
         self.properties.setPropertyAttribute('Point Size', 'hidden', not enablePointSize)
 
     def _updateColorBy(self, retainColorMap=False):
@@ -334,6 +340,143 @@ class PolyDataItem(om.ObjectModelItem):
         view.render()
 
 
+class Image2DItem(om.ObjectModelItem):
+
+    def __init__(self, name, image, view):
+
+        om.ObjectModelItem.__init__(self, name, om.Icons.Robot)
+
+        self.views = []
+        self.image = image
+
+        defaultWidth = 300
+
+        self.actor = vtk.vtkLogoRepresentation()
+        self.actor.SetImage(image)
+        self.actor.GetImageProperty().SetOpacity(1.0)
+
+        actors = vtk.vtkPropCollection()
+        self.actor.GetActors2D(actors)
+        self.texture = actors.GetItemAsObject(0).GetTexture()
+
+        self.addProperty('Visible', True)
+        self.addProperty('Anchor', 1,
+                         attributes=om.PropertyAttributes(enumNames=['Top Left', 'Top Right', 'Bottom Left', 'Bottom Right']))
+        self.addProperty('Width', defaultWidth,
+                         attributes=om.PropertyAttributes(minimum=0, maximum=9999, singleStep=50))
+        self.addProperty('Alpha', 1.0,
+                         attributes=om.PropertyAttributes(decimals=2, minimum=0, maximum=1.0, singleStep=0.1))
+
+        #defaultHeight = self._getHeightForWidth(defaultWidth)
+        #self.addProperty('Height', defaultHeight,
+        #                 attributes=om.PropertyAttributes(minimum=0, maximum=9999, singleStep=10))
+
+        if view is not None:
+            self.addToView(view)
+
+    def _renderAllViews(self):
+        for view in self.views:
+            view.render()
+
+    def hasDataSet(self, dataSet):
+        return dataSet == self.image
+
+    def hasActor(self, actor):
+        return actor == self.actor
+
+    def setImage(self, image):
+        self.image = image
+        self.actor.SetImage(image)
+
+        # also set the image on the texture, otherwise
+        # the texture input won't update until the next
+        # render where this actor is visible
+        self.texture.SetInputData(image)
+
+        if self.getProperty('Visible'):
+            self._renderAllViews()
+
+    def addToView(self, view):
+        if view in self.views:
+            return
+        self.views.append(view)
+
+        self._updatePositionCoordinates(view)
+
+        view.renderer().AddActor(self.actor)
+        view.render()
+
+    def _getHeightForWidth(self, image, width):
+        w, h, _ = image.GetDimensions()
+        aspect = w/float(h)
+        return int(np.round(width / aspect))
+
+    def _updatePositionCoordinates(self, view):
+
+        width = self.getProperty('Width')
+        height = self._getHeightForWidth(self.image, width)
+
+        pc0 = vtk.vtkCoordinate()
+        pc1 = self.actor.GetPositionCoordinate()
+        pc2 = self.actor.GetPosition2Coordinate()
+
+        for pc in [pc0, pc1, pc2]:
+            pc.SetViewport(view.renderer())
+
+        pc0.SetReferenceCoordinate(None)
+        pc0.SetCoordinateSystemToNormalizedDisplay()
+        pc1.SetReferenceCoordinate(pc0)
+        pc1.SetCoordinateSystemToDisplay()
+
+        anchor = self.getPropertyEnumValue('Anchor')
+        if anchor == 'Top Left':
+            pc0.SetValue(0.0, 1.0)
+            pc1.SetValue(0.0, -height)
+
+        elif anchor == 'Top Right':
+            pc0.SetValue(1.0, 1.0)
+            pc1.SetValue(-width, -height)
+
+        elif anchor == 'Bottom Left':
+            pc0.SetValue(0.0, 0.0)
+            pc1.SetValue(0.0, 0.0)
+
+        elif anchor == 'Bottom Right':
+            pc0.SetValue(1.0, 0.0)
+            pc1.SetValue(-width, 0.0)
+
+        pc2.SetCoordinateSystemToDisplay()
+        pc2.SetReferenceCoordinate(pc1)
+        pc2.SetValue(width, height)
+
+
+    def _onPropertyChanged(self, propertySet, propertyName):
+        om.ObjectModelItem._onPropertyChanged(self, propertySet, propertyName)
+        if propertyName == 'Alpha':
+            self.actor.GetImageProperty().SetOpacity(self.getProperty(propertyName))
+        elif propertyName == 'Visible':
+            self.actor.SetVisibility(self.getProperty(propertyName))
+        elif propertyName in ('Width', 'Height', 'Anchor'):
+            if self.views:
+                self._updatePositionCoordinates(self.views[0])
+        self._renderAllViews()
+
+    def onRemoveFromObjectModel(self):
+        om.ObjectModelItem.onRemoveFromObjectModel(self)
+        self.removeFromAllViews()
+
+    def removeFromAllViews(self):
+        for view in list(self.views):
+            self.removeFromView(view)
+        assert len(self.views) == 0
+
+    def removeFromView(self, view):
+        assert view in self.views
+        self.views.remove(view)
+        view.renderer().RemoveActor(self.actor)
+        view.render()
+
+
 class TextItem(om.ObjectModelItem):
 
     def __init__(self, name, text='', view=None):
@@ -410,10 +553,11 @@ class TextItem(om.ObjectModelItem):
 
 
 def updateText(text, name, **kwargs):
-
-    obj = om.findObjectByName(name)
-    obj = obj or showText(text, name, **kwargs)
-    obj.setProperty('Text', text)
+    obj = om.findObjectByName(name, parent=getParentObj(kwargs.get('parent')))
+    if obj is None:
+        obj or showText(text, name, **kwargs)
+    else:
+        obj.setProperty('Text', text)
     return obj
 
 
@@ -426,12 +570,26 @@ def showText(text, name, fontSize=18, position=(10, 10), parent=None, view=None)
     item.setProperty('Font Size', fontSize)
     item.setProperty('Position', list(position))
 
-    if isinstance(parent, str):
-        parentObj = om.getOrCreateContainer(parent)
-    else:
-        parentObj = parent
+    om.addToObjectModel(item, getParentObj(parent))
+    return item
 
-    om.addToObjectModel(item, parentObj)
+
+def updateImage(image, name, **kwargs):
+    obj = om.findObjectByName(name, parent=getParentObj(kwargs.get('parent')))
+    if obj is None:
+        obj = showImage(image, name, **kwargs)
+    else:
+        obj.setImage(image)
+    return obj
+
+
+def showImage(image, name, anchor='Top Left', parent=None, view=None):
+    view = view or app.getCurrentRenderView()
+    assert view
+
+    item = Image2DItem(name, image, view=view)
+    item.setProperty('Anchor', anchor)
+    om.addToObjectModel(item, getParentObj(parent))
     return item
 
 
@@ -504,6 +662,12 @@ class FrameItem(PolyDataItem):
 
     def addToView(self, view):
         PolyDataItem.addToView(self, view)
+
+    def hasDataSet(self, dataSet):
+        return dataSet == self.transform
+
+    def hasActor(self, actor):
+        return actor == self.widget.GetRepresentation() or PolyDataItem.hasActor(self, actor)
 
     def copyFrame(self, transform):
         self._blockSignals = True
@@ -626,7 +790,7 @@ class FrameSync(object):
         if self._findFrameId(frame) is not None:
             return
 
-        frameId = self._ids.next()
+        frameId = next(self._ids)
         callbackId = frame.connectFrameModified(self._onFrameModified)
 
         self.frames[frameId] = FrameSync.FrameData(
@@ -647,7 +811,7 @@ class FrameSync(object):
     def _computeBaseTransform(self, frame):
 
         currentDelta = None
-        for frameId, frameData in self.frames.items():
+        for frameId, frameData in list(self.frames.items()):
 
             if frameData.ref() is None:
                 self._removeFrameId(frameId)
@@ -670,7 +834,7 @@ class FrameSync(object):
 
     def _findFrameId(self, frame):
 
-        for frameId, frameData in self.frames.items():
+        for frameId, frameData in list(self.frames.items()):
 
             if frameData.ref() is None:
                 self._removeFrameId(frameId)
@@ -705,7 +869,7 @@ class FrameSync(object):
 
         self._blockCallbacks = True
 
-        for frameId, frameData in self.frames.items():
+        for frameId, frameData in list(self.frames.items()):
             if frameData.ref() is None:
                 self._removeFrameId(frameId)
             elif frameId != modifiedFrameId:
@@ -714,6 +878,24 @@ class FrameSync(object):
                 self._moveFrame(frameId, modifiedFrameId)
 
         self._blockCallbacks = False
+
+
+def setCameraToParallelProjection(camera):
+    viewAngle = np.radians(camera.GetViewAngle())
+    viewDistance = np.linalg.norm(np.array(camera.GetFocalPoint()) - np.array(camera.GetPosition()))
+    desiredParallelScale = np.tan(viewAngle * 0.5)  * viewDistance
+    camera.SetParallelScale(desiredParallelScale)
+    camera.ParallelProjectionOn()
+
+
+def setCameraToPerspectiveProjection(camera):
+    parallelScale = camera.GetParallelScale()
+    viewAngle = np.radians(camera.GetViewAngle())
+    desiredViewDistance = parallelScale / np.tan(viewAngle * 0.5)
+    focalPoint = np.array(camera.GetFocalPoint())
+    desiredCameraPosition = focalPoint + desiredViewDistance * np.array(camera.GetViewPlaneNormal())
+    camera.SetPosition(desiredCameraPosition)
+    camera.ParallelProjectionOff()
 
 
 class ViewOptionsItem(om.ObjectModelItem):
@@ -749,9 +931,9 @@ class ViewOptionsItem(om.ObjectModelItem):
         elif propertyName == 'Camera projection':
 
             if self.getPropertyEnumValue(propertyName) == 'Perspective':
-                self.view.camera().ParallelProjectionOff()
+                setCameraToPerspectiveProjection(self.view.camera())
             else:
-                self.view.camera().ParallelProjectionOn()
+                setCameraToParallelProjection(self.view.camera())
 
         elif propertyName == 'Orientation widget':
 
@@ -813,37 +995,177 @@ def computeViewBoundsSoloGrid(view, gridObj):
         return computeViewBoundsNoGrid(view, gridObj)
 
 
-def showGrid(view, cellSize=0.5, numberOfCells=25, name='grid', parent='sensors', color=[1,1,1], alpha=0.05, gridTransform=None, viewBoundsFunction=None):
+class GridItem(PolyDataItem):
 
-    grid = vtk.vtkGridSource()
-    grid.SetScale(cellSize)
-    grid.SetGridSize(numberOfCells)
-    grid.SetSurfaceEnabled(True)
-    grid.Update()
+    def __init__(self, name, view=None):
+        PolyDataItem.__init__(self, name, polyData=vtk.vtkPolyData(), view=view)
+        self.actor.PickableOff()
+        self.actor.GetProperty().LightingOff()
+        self.textActors = []
+        self.addProperty('Grid Half Width', 100.0, attributes=om.PropertyAttributes(minimum=0.01, maximum=1e6, singleStep=10, decimals=2))
+        self.addProperty('Major Tick Resolution', 10, attributes=om.PropertyAttributes(minimum=1, maximum=100, singleStep=1))
+        self.addProperty('Minor Tick Resolution', 2, attributes=om.PropertyAttributes(minimum=1, maximum=100, singleStep=1))
+        self.addProperty('Major Tick Rings', True)
+        self.addProperty('Minor Tick Rings', False)
+        self.addProperty('Show Text', True)
+        self.addProperty('Text Angle', 0,
+                         attributes=om.PropertyAttributes(minimum=-999, maximum=999, singleStep=5))
+        self.addProperty('Text Size', 10, attributes=om.PropertyAttributes(minimum=4, maximum=100, singleStep=1))
+        self.addProperty('Text Color', [1.0, 1.0, 1.0])
+        self.addProperty('Text Alpha', 1.0,
+                         attributes=om.PropertyAttributes(decimals=2, minimum=0, maximum=1.0, singleStep=0.1))
+        self._updateGrid()
+        self.setProperty('Surface Mode', 'Wireframe')
 
-    gridObj = showPolyData(grid.GetOutput(), name, view=view, alpha=alpha, color=color, visible=True, parent=parent)
-    gridObj.gridSource = grid
-    gridObj.actor.GetProperty().LightingOff()
-    gridObj.actor.SetPickable(False)
+    def _onPropertyChanged(self, propertySet, propertyName):
+        PolyDataItem._onPropertyChanged(self, propertySet, propertyName)
+        if propertyName in ('Grid Half Width', 'Major Tick Resolution',
+                            'Minor Tick Resolution', 'Major Tick Rings', 'Minor Tick Rings'):
+            self._updateGrid()
+        if propertyName in ('Visible', 'Show Text', 'Text Color', 'Text Alpha', 'Text Size', 'Text Angle'):
+            self._updateTextActorProperties()
 
-    gridTransform = gridTransform or vtk.vtkTransform()
-    gridObj.actor.SetUserTransform(gridTransform)
-    showFrame(gridTransform, name + ' frame', scale=0.2, visible=False, parent=gridObj, view=view)
+    def _updateGrid(self):
 
-    gridObj.setProperty('Surface Mode', 'Wireframe')
+        gridHalfWidth = self.getProperty('Grid Half Width')
+        majorTickSize = gridHalfWidth / self.getProperty('Major Tick Resolution')
+        minorTickSize = majorTickSize / self.getProperty('Minor Tick Resolution')
+        majorTickRings = self.getProperty('Major Tick Rings')
+        minorTickRings = self.getProperty('Minor Tick Rings')
+        polyData = makeGridPolyData(gridHalfWidth,
+                      majorTickSize, minorTickSize,
+                      majorTickRings, minorTickRings)
+        self.setPolyData(polyData)
+        self._buildTextActors()
 
-    viewBoundsFunction = viewBoundsFunction or computeViewBoundsNoGrid
+    def _updateTextActorProperties(self):
+        self._repositionTextActors()
+
+        visible = self.getProperty('Visible') and self.getProperty('Show Text')
+        textAlpha = self.getProperty('Text Alpha')
+        color = self.getProperty('Text Color')
+        textSize = self.getProperty('Text Size')
+
+        for actor in self.textActors:
+            prop = actor.GetTextProperty()
+            actor.SetVisibility(visible)
+            prop.SetColor(color)
+            prop.SetFontSize(textSize)
+            prop.SetOpacity(textAlpha)
+
+    def addToView(self, view):
+        if view in self.views:
+            return
+        PolyDataItem.addToView(self, view)
+        self._addTextActorsToView(view)
+
+    def _addTextActorsToView(self, view):
+        for actor in self.textActors:
+            view.renderer().AddActor(actor)
+
+    def _removeTextActorsFromView(self, view):
+        for actor in self.textActors:
+            view.renderer().RemoveActor(actor)
+
+    def _clearTextActors(self):
+        for view in self.views:
+          self._removeTextActorsFromView(view)
+        self.textActors = []
+
+    def _repositionTextActors(self):
+        if not self.textActors:
+            return
+
+        angle = np.radians(self.getProperty('Text Angle'))
+        sinAngle = np.sin(angle)
+        cosAngle = np.cos(angle)
+
+        gridHalfWidth = self.getProperty('Grid Half Width')
+        majorTickSize = gridHalfWidth / self.getProperty('Major Tick Resolution')
+        transform = self.actor.GetUserTransform() or vtk.vtkTransform()
+        for i, actor in enumerate(self.textActors):
+            distance = i * majorTickSize
+            actor = self.textActors[i]
+            prop = actor.GetTextProperty()
+            coord = actor.GetPositionCoordinate()
+            coord.SetCoordinateSystemToWorld()
+            p = transform.TransformPoint((distance*cosAngle, distance*sinAngle, 0.0))
+            coord.SetValue(p)
+
+    def _buildTextActors(self):
+
+        self._clearTextActors()
+        gridHalfWidth = self.getProperty('Grid Half Width')
+        majorTickSize = gridHalfWidth / self.getProperty('Major Tick Resolution')
+        suffix = 'm'
+        for i in range(int(gridHalfWidth / majorTickSize)):
+            ringDistance = i * majorTickSize
+            actor = vtk.vtkTextActor()
+            prop = actor.GetTextProperty()
+            actor.SetInput('{:.3f}'.format(ringDistance).rstrip('0').rstrip('.') + suffix)
+            actor.SetPickable(False)
+            self.textActors.append(actor)
+
+        self._updateTextActorProperties()
+
+        for view in self.views:
+            self._addTextActorsToView(view)
+
+
+def showGrid(view, cellSize=0.5, numberOfCells=25, name='grid', parent='scene', color=[1,1,1], alpha=0.05, gridTransform=None, viewBoundsFunction=None):
+
+    gridObj = GridItem(name)
+
+    gridHalfWidth = cellSize * numberOfCells
+    gridObj.setProperty('Grid Half Width', gridHalfWidth)
+    gridObj.setProperty('Major Tick Resolution', numberOfCells)
+    gridObj.setProperty('Minor Tick Resolution', 1)
+    gridObj.setProperty('Show Text', False)
+    gridObj.setProperty('Major Tick Rings', False)
+    gridObj.setProperty('Minor Tick Rings', False)
+    gridObj.setProperty('Alpha', alpha)
+    gridObj.setProperty('Text Alpha', 0.5)
+    gridObj.addToView(view)
+    om.addToObjectModel(gridObj, getParentObj(parent))
+    gridFrame = addChildFrame(gridObj)
+    gridFrame.connectFrameModified(lambda x: gridObj._repositionTextActors())
+    gridFrame.setProperty('Scale', 1.0)
+    gridObj.viewBoundsFunction = viewBoundsFunction or computeViewBoundsNoGrid
+    gridObj.emptyBoundsSize = 1.0
     def onViewBoundsRequest():
         if view not in gridObj.views or not gridObj.getProperty('Visible'):
             return
-        bounds = viewBoundsFunction(view, gridObj)
+        bounds = gridObj.viewBoundsFunction(view, gridObj)
         if vtk.vtkMath.AreBoundsInitialized(bounds):
             view.addCustomBounds(bounds)
         else:
-            view.addCustomBounds([-1, 1, -1, 1, -1, 1])
+            view.addCustomBounds(np.array([-1, 1, -1, 1, -1, 1]) * gridObj.emptyBoundsSize)
     view.connect('computeBoundsRequest(ddQVTKWidgetView*)', onViewBoundsRequest)
 
     return gridObj
+
+
+def makeGridPolyData(gridHalfWidth=100,
+             majorTickSize=10.0, minorTickSize=1.0,
+             majorGridRings=True, minorGridRings=False):
+
+    majorGrid = vtk.vtkGridSource()
+    majorGrid.SetSurfaceEnabled(True)
+    majorGrid.SetArcsEnabled(majorGridRings)
+    majorGrid.SetGridSize(int(gridHalfWidth/majorTickSize))
+    majorGrid.SetScale(majorTickSize)
+    majorGrid.Update()
+
+    if minorTickSize != majorTickSize:
+        minorGrid = vtk.vtkGridSource()
+        minorGrid.SetSurfaceEnabled(False)
+        minorGrid.SetArcsEnabled(minorGridRings)
+        minorGrid.SetScale(minorTickSize)
+        minorGrid.SetGridSize(int(gridHalfWidth/minorTickSize))
+        minorGrid.Update()
+        return filterUtils.appendPolyData([majorGrid.GetOutput(), minorGrid.GetOutput()])
+    else:
+        return majorGrid.GetOutput()
 
 
 def createScalarBarWidget(view, lookupTable, title):
@@ -864,40 +1186,45 @@ def createScalarBarWidget(view, lookupTable, title):
     return w
 
 
-def updatePolyData(polyData, name, **kwargs):
+def getParentObj(parent):
+    if isinstance(parent, str):
+        return om.getOrCreateContainer(parent)
+    else:
+        return parent
 
-    obj = om.findObjectByName(name)
-    obj = obj or showPolyData(polyData, name, **kwargs)
-    obj.setPolyData(polyData)
+
+def updatePolyData(polyData, name, **kwargs):
+    obj = om.findObjectByName(name, parent=getParentObj(kwargs.get('parent')))
+    if obj is None:
+        obj = showPolyData(polyData, name, **kwargs)
+    else:
+        obj.setPolyData(polyData)
     return obj
 
 
 def updateFrame(frame, name, **kwargs):
-
-    obj = om.findObjectByName(name)
-    obj = obj or showFrame(frame, name, **kwargs)
-    obj.copyFrame(frame)
+    obj = om.findObjectByName(name, parent=getParentObj(kwargs.get('parent')))
+    if obj is None:
+        obj = showFrame(frame, name, **kwargs)
+    else:
+        obj.copyFrame(frame)
     return obj
 
 
-def showFrame(frame, name, view=None, parent='segmentation', scale=0.35, visible=True):
+def showFrame(frame, name, view=None, parent='data', scale=0.35, visible=True, alpha=1.0):
 
     view = view or app.getCurrentRenderView()
     assert view
 
-    if isinstance(parent, str):
-        parentObj = om.getOrCreateContainer(parent)
-    else:
-        parentObj = parent
-
     item = FrameItem(name, frame, view)
-    om.addToObjectModel(item, parentObj)
+    om.addToObjectModel(item, getParentObj(parent))
     item.setProperty('Visible', visible)
+    item.setProperty('Alpha', alpha)
     item.setProperty('Scale', scale)
     return item
 
 
-def showPolyData(polyData, name, color=None, colorByName=None, colorByRange=None, alpha=1.0, visible=True, view=None, parent='segmentation', cls=None):
+def showPolyData(polyData, name, color=None, colorByName=None, colorByRange=None, alpha=1.0, visible=True, view=None, parent='data', cls=None):
 
     view = view or app.getCurrentRenderView()
     assert view
@@ -905,17 +1232,12 @@ def showPolyData(polyData, name, color=None, colorByName=None, colorByRange=None
     cls = cls or PolyDataItem
     item = cls(name, polyData, view)
 
-    if isinstance(parent, str):
-        parentObj = om.getOrCreateContainer(parent)
-    else:
-        parentObj = parent
-
-    om.addToObjectModel(item, parentObj)
+    om.addToObjectModel(item, getParentObj(parent))
     item.setProperty('Visible', visible)
     item.setProperty('Alpha', alpha)
 
     if colorByName and colorByName not in item.getArrayNames():
-        print 'showPolyData(colorByName=%s): array not found' % colorByName
+        print('showPolyData(colorByName=%s): array not found' % colorByName)
         colorByName = None
 
     if colorByName:
@@ -1136,9 +1458,11 @@ def pickPoint(displayPoint, view, obj=None, pickType='points', tolerance=0.01):
         obj = om.findObjectByName(obj)
         assert obj
 
-
+    wasTexturedBackground = False
     if pickType == 'render':
         picker = vtk.vtkPropPicker()
+        wasTexturedBackground = view.renderer().GetTexturedBackground()
+        view.renderer().TexturedBackgroundOff()
     else:
         picker = vtk.vtkPointPicker() if pickType == 'points' else vtk.vtkCellPicker()
         picker.SetTolerance(tolerance)
@@ -1154,6 +1478,8 @@ def pickPoint(displayPoint, view, obj=None, pickType='points', tolerance=0.01):
         picker.PickFromListOn()
 
     picker.Pick(displayPoint[0], displayPoint[1], 0, view.renderer())
+    if wasTexturedBackground:
+        view.renderer().TexturedBackgroundOn()
     pickedProp = picker.GetViewProp()
     pickedPoint = np.array(picker.GetPickPosition())
     pickedDataset = pickedProp.GetMapper().GetInput() if isinstance(pickedProp, vtk.vtkActor) else None
@@ -1195,25 +1521,26 @@ def mapMousePosition(widget, mouseEvent):
     return mousePosition.x(), widget.height - mousePosition.y()
 
 
-def getObjectByDataSet(polyData):
+def getObjectByDataSet(dataSet):
+    if not dataSet:
+        return None
     for obj in om.getObjects():
-        if obj.hasDataSet(polyData):
+        if obj.hasDataSet(dataSet):
             return obj
+
 
 def getObjectByProp(prop):
     if not prop:
         return None
     for obj in om.getObjects():
-        if isinstance(obj, FrameItem) and obj.widget.GetRepresentation() == prop:
+        if obj.hasActor(prop):
             return obj
-    if isinstance(prop, vtk.vtkActor):
-        return getObjectByDataSet(prop.GetMapper().GetInput())
 
 
 def findPickedObject(displayPoint, view):
 
     pickedPoint, pickedProp, pickedDataset = pickProp(displayPoint, view)
-    obj = getObjectByProp(pickedProp)
+    obj = getObjectByProp(pickedProp) or getObjectByDataSet(pickedDataset)
     return obj, pickedPoint
 
 """
@@ -1229,35 +1556,9 @@ def setAntiAliasing(enabled):
 
 
 def enableEyeDomeLighting(view):
-
-    seq = vtk.vtkSequencePass()
-    opaque = vtk.vtkOpaquePass()
-
-    peeling = vtk.vtkDepthPeelingPass()
-    peeling.SetMaximumNumberOfPeels(200)
-    peeling.SetOcclusionRatio(0.1)
-
-    translucent = vtk.vtkTranslucentPass()
-    peeling.SetTranslucentPass(translucent)
-
-    volume = vtk.vtkVolumetricPass()
-    overlay = vtk.vtkOverlayPass()
-    lights = vtk.vtkLightsPass()
-
-    passes=vtk.vtkRenderPassCollection()
-    passes.AddItem(lights)
-    passes.AddItem(opaque)
-    #passes.AddItem(peeling)
-    passes.AddItem(translucent)
-    #passes.AddItem(volume)
-    #passes.AddItem(overlay)
-    seq.SetPasses(passes)
-
+    standardPass = vtk.vtkRenderStepsPass()
     edlPass = vtk.vtkEDLShading()
-    cameraPass = vtk.vtkCameraPass()
-
-    edlPass.SetDelegatePass(cameraPass)
-    cameraPass.SetDelegatePass(seq)
+    edlPass.SetDelegatePass(standardPass)
     view.renderer().SetPass(edlPass)
 
 
@@ -1265,7 +1566,7 @@ def disableEyeDomeLighting(view):
     view.renderer().SetPass(None)
 
 
-def showImage(filename):
+def showQLabelImage(filename):
     '''
     Returns a QLabel displaying the image contents of given filename.
     Make sure to assign the label, it will destruct when it goes out
@@ -1279,3 +1580,5 @@ def showImage(filename):
     imageLabel.resize(imageLabel.pixmap.size())
     imageLabel.setWindowTitle(os.path.basename(filename))
     imageLabel.show()
+    return imageLabel
+

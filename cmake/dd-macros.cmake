@@ -1,11 +1,18 @@
 macro(setup_python)
-  find_package(PythonLibs 2.7 REQUIRED)
-  find_package(PythonInterp 2.7 REQUIRED)
+  find_package(PythonLibs 3.4 REQUIRED)
+  find_package(PythonInterp 3.4 REQUIRED)
 endmacro()
 
 
 macro(setup_qt)
-  set(DD_QT_VERSION 4 CACHE STRING "Selected Qt version")
+  get_ubuntu_version()
+
+  set(_default_qt_version 4)
+  if (ubuntu_version EQUAL 18.04)
+    set(_default_qt_version 5)
+  endif()
+
+  set(DD_QT_VERSION ${_default_qt_version} CACHE STRING "Selected Qt version")
   set_property(CACHE DD_QT_VERSION PROPERTY STRINGS 4 5)
 
   if(NOT (DD_QT_VERSION VERSION_EQUAL 4 OR DD_QT_VERSION VERSION_EQUAL 5))
@@ -87,6 +94,23 @@ macro(use_cpp11)
 endmacro()
 
 
+macro(get_ubuntu_version)
+  find_program(LSB_RELEASE lsb_release)
+  mark_as_advanced(LSB_RELEASE)
+  set(ubuntu_version)
+  if(LSB_RELEASE)
+    execute_process(COMMAND ${LSB_RELEASE} -is
+        OUTPUT_VARIABLE osname
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(osname STREQUAL Ubuntu)
+      execute_process(COMMAND ${LSB_RELEASE} -rs
+          OUTPUT_VARIABLE ubuntu_version
+          OUTPUT_STRIP_TRAILING_WHITESPACE)
+    endif()
+  endif()
+endmacro()
+
+
 macro(use_pkg target)
 
   find_package(PkgConfig REQUIRED)
@@ -112,4 +136,8 @@ endmacro()
 
 macro(setup_pkg_config_path)
   set(ENV{PKG_CONFIG_PATH} "${CMAKE_INSTALL_PREFIX}/lib/pkgconfig:$ENV{PKG_CONFIG_PATH}")
+endmacro()
+
+macro(install_headers)
+  install(FILES ${ARGN} DESTINATION ${DD_INSTALL_INCLUDE_DIR})
 endmacro()

@@ -58,9 +58,7 @@ class ConsoleApp(object):
                     if ConsoleApp.getTestingEnabled():
                         raise
                     else:
-                        print traceback.format_exc()
-
-
+                        print(traceback.format_exc())
 
         startTimer = TimerCallback(callback=onStartup)
         startTimer.singleShot(0)
@@ -68,7 +66,7 @@ class ConsoleApp(object):
         result = ConsoleApp.applicationInstance().exec_()
 
         if ConsoleApp.getTestingEnabled() and not ConsoleApp.getTestingInteractiveEnabled():
-            print 'TESTING PROGRAM RETURNING EXIT CODE:', result
+            print('TESTING PROGRAM RETURNING EXIT CODE:', result)
             sys.exit(result)
 
         return result
@@ -107,17 +105,24 @@ class ConsoleApp(object):
     def processEvents():
         QtCore.QCoreApplication.instance().processEvents()
 
+    @staticmethod
+    def registerStartupCallback(func, priority=1):
+        ConsoleApp._startupCallbacks.setdefault(priority, []).append(func)
+
     def showObjectModel(self):
 
         if not self.objectModelWidget:
-            w = QtGui.QWidget()
-            l = QtGui.QVBoxLayout(w)
+            w = QtGui.QSplitter(QtCore.Qt.Vertical)
             model = om.getDefaultObjectModel()
-            l.addWidget(model.getTreeWidget())
-            l.addWidget(model.getPropertiesPanel())
+            w.addWidget(model.getTreeWidget())
+            sw = QtGui.QScrollArea()
+            sw.setWidget(model.getPropertiesPanel())
+            sw.setWidgetResizable(True)
+            w.addWidget(sw)
             applogic.addShortcut(w, 'Ctrl+Q', self.quit)
             self.objectModelWidget = w
             self.objectModelWidget.resize(350, 700)
+            w.setSizes([350, 350])
 
         self.objectModelWidget.show()
         self.objectModelWidget.raise_()
@@ -126,6 +131,7 @@ class ConsoleApp(object):
 
     def createView(self, useGrid=True):
         view = PythonQt.dd.ddQVTKWidgetView()
+        applogic._defaultRenderView = view
         view.resize(600, 400)
 
         applogic.setCameraTerrainModeEnabled(view, True)
@@ -137,7 +143,6 @@ class ConsoleApp(object):
 
         applogic.resetCamera(viewDirection=[-1,-1,-0.3], view=view)
         self.viewBehaviors = viewbehaviors.ViewBehaviors(view)
-        applogic._defaultRenderView = view
 
         applogic.addShortcut(view, 'Ctrl+Q', self.quit)
         applogic.addShortcut(view, 'F8', self.showPythonConsole)
