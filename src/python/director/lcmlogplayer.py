@@ -243,7 +243,7 @@ class LcmLogPlayerGui(object):
                 recorder.stopRecording(useTimer=False)
             self.onPlay(onFrame = onFrame, onStop = onStop, fixedRate = fixedRate)
         else:
-            print "No screen grabber found"
+            print("No screen grabber found")
 
     def onStop(self):
         self.logPlayer.timer.stop()

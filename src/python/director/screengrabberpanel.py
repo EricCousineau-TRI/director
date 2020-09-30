@@ -202,7 +202,7 @@ class ScreenGrabberPanel(object):
             self.recordTimer.start()
 
         self.updateRecordingButtons()
-        print "Start Recording..."
+        print("Start Recording...")
 
     def stopRecording(self, useTimer=True):
         if useTimer:
